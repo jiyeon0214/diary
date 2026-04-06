@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>나의 일기장 (인증 버전)</title>
+    <style>
+        :root {
+            --primary-color: #6c5ce7;
+            --bg-color: #f8f9fa;
+            --card-bg: #ffffff;
+            --text-color: #2d3436;
+        }
+        body {
+            font-family: 'Pretendard', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0; padding: 20px;
+            display: flex; flex-direction: column; align-items: center; min-height: 100vh;
+        }
+        .container { width: 100%; max-width: 600px; }
+        .card {
+            background: var(--card-bg); padding: 30px; border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 20px;
+        }
+        h1 { color: var(--primary-color); text-align: center; }
+        input, textarea {
+            width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #dfe6e9;
+            border-radius: 8px; box-sizing: border-box; font-size: 1rem;
+        }
+        button {
+            width: 100%; background-color: var(--primary-color); color: white;
+            border: none; padding: 12px; border-radius: 8px; cursor: pointer;
+            font-size: 1rem; margin-top: 10px; transition: opacity 0.2s;
+        }
+        button:hover { opacity: 0.9; }
+        .hidden { display: none; }
+        .diary-item {
+            background: white; padding: 20px; border-radius: 12px;
+            margin-bottom: 15px; border-left: 5px solid var(--primary-color);
+        }
+        .diary-date { font-size: 0.8rem; color: #b2bec3; }
+        .nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .logout-btn { background: none; color: #ff7675; width: auto; padding: 5px 10px; }
+        .toggle-auth { text-align: center; margin-top: 15px; cursor: pointer; color: var(--primary-color); }
+        .sync-status { position: fixed; bottom: 10px; right: 10px; font-size: 0.7rem; color: #ccc; }
+    </style>
+</head>
+<body>
+
+    <!-- Auth View -->
+    <div id="auth-view" class="container">
+        <div class="card">
+            <h1 id="auth-title">로그인</h1>
+            <input type="text" id="username" placeholder="사용자명">
+            <input type="password" id="password" placeholder="비밀번호">
+            <button id="auth-btn" onclick="handleAuth()">로그인</button>
+            <div class="toggle-auth" onclick="toggleAuthMode()" id="auth-toggle-text">계정이 없으신가요? 회원가입</div>
+        </div>
+    </div>
+
+    <!-- Main View -->
+    <div id="main-view" class="container hidden">
+        <div class="nav">
+            <span id="user-display" style="font-weight: bold;"></span>
+            <button class="logout-btn" onclick="logout()">로그아웃</button>
+        </div>
+        <div class="card">
+            <div id="current-date" style="font-weight: 600; margin-bottom: 10px;"></div>
+            <textarea id="diary-input" placeholder="오늘 하루는 어땠나요?" style="height: 120px; resize: none;"></textarea>
+            <button onclick="saveEntry()">저장하기</button>
+        </div>
+        <div id="diary-container"></div>
+    </div>
+
+    <div id="sync-status" class="sync-status">서버 연결 대기 중...</div>
+
+    <script>
+        const API_URL = '/api';
+        let currentUser = localStorage.getItem('diary_user');
+        let isSignupMode = false;
+
+        async function checkServer() {
+            try {
+                await fetch(`${API_URL}/entries?user=test`);
+                document.getElementById('sync-status').textContent = '● 서버 연결됨';
+            } catch {
+                document.getElementById('sync-status').textContent = '○ 서버 오프라인 (기능 제한됨)';
+            }
+        }
+
+        function toggleAuthMode() {
+            isSignupMode = !isSignupMode;
+            document.getElementById('auth-title').textContent = isSignupMode ? '회원가입' : '로그인';
+            document.getElementById('auth-btn').textContent = isSignupMode ? '회원가입' : '로그인';
+            document.getElementById('auth-toggle-text').textContent = isSignupMode ? '이미 계정이 있나요? 로그인' : '계정이 없으신가요? 회원가입';
+        }
+
+        async function handleAuth() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            if (!username || !password) return alert('모두 입력해주세요.');
+
+            const endpoint = isSignupMode ? '/signup' : '/login';
+            try {
+                const res = await fetch(`${API_URL}${endpoint}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    if (isSignupMode) {
+                        alert('회원가입 성공! 로그인해주세요.');
+                        toggleAuthMode();
+                    } else {
+                        login(data.username);
+                    }
+                } else {
+                    alert(data.error);
+                }
+            } catch (e) { alert('서버 연결 실패'); }
+        }
+
+        function login(username) {
+            currentUser = username;
+            localStorage.setItem('diary_user', username);
+            showMain();
+        }
+
+        function logout() {
+            currentUser = null;
+            localStorage.removeItem('diary_user');
+            location.reload();
+        }
+
+        function showMain() {
+            document.getElementById('auth-view').classList.add('hidden');
+            document.getElementById('main-view').classList.remove('hidden');
+            document.getElementById('user-display').textContent = `${currentUser}님의 일기장`;
+            loadEntries();
+        }
+
+        async function loadEntries() {
+            try {
+                const res = await fetch(`${API_URL}/entries?user=${currentUser}`);
+                const entries = await res.json();
+                renderEntries(entries);
+            } catch (e) { console.error('불러오기 실패'); }
+        }
+
+        function renderEntries(entries) {
+            const container = document.getElementById('diary-container');
+            container.innerHTML = '';
+            entries.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            entries.forEach(e => {
+                const div = document.createElement('div');
+                div.className = 'diary-item';
+                div.innerHTML = `
+                    <div class="diary-date">${e.date} ${e.time}</div>
+                    <div style="white-space: pre-wrap; margin: 10px 0;">${e.text}</div>
+                    <button style="background:none; color:#ff7675; width:auto; padding:0; font-size:0.8rem;" onclick="deleteEntry('${e.timestamp}')">삭제</button>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        async function saveEntry() {
+            const input = document.getElementById('diary-input');
+            const text = input.value.trim();
+            if (!text) return;
+
+            const now = new Date();
+            const entry = {
+                text,
+                date: `${now.getFullYear()}.${now.getMonth()+1}.${now.getDate()}`,
+                time: `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`,
+                timestamp: now.toISOString()
+            };
+
+            await fetch(`${API_URL}/entries`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ entry, user: currentUser })
+            });
+            input.value = '';
+            loadEntries();
+        }
+
+        async function deleteEntry(timestamp) {
+            if (!confirm('삭제할까요?')) return;
+            await fetch(`${API_URL}/entries/${timestamp}?user=${currentUser}`, { method: 'DELETE' });
+            loadEntries();
+        }
+
+        // Init
+        const now = new Date();
+        document.getElementById('current-date').textContent = `${now.getFullYear()}년 ${now.getMonth()+1}월 ${now.getDate()}일`;
+        checkServer();
+        if (currentUser) showMain();
+    </script>
+</body>
+</html>
